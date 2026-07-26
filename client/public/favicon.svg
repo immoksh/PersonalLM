@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PersonalLM">
+  <!--
+    The app mark: the same stacked-layers glyph the sidebar wears, on the neon →
+    violet gradient used for the wordmark. Geometry is deliberately heavier than
+    the in-app LayersIcon — three hairline chevrons collapse into a smudge at the
+    16px a tab actually renders, so the stack is two bold shapes instead.
+    Colours are literal sRGB: a favicon is rendered outside the document and
+    cannot see the theme's CSS custom properties.
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="0.35">
+      <stop offset="0" stop-color="#53fa67" />
+      <!-- Midpoint holds the chroma up. Interpolating neon → violet in sRGB
+           alone passes through a grey-sage that is invisible behind text but
+           obvious across a whole tile. -->
+      <stop offset="0.5" stop-color="#5fdcc4" />
+      <stop offset="1" stop-color="#b37bff" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#tile)" />
+
+  <g fill="#04140a" stroke="#04140a" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M32 15 52 25 32 35 12 25Z" />
+    <path d="M12 35 32 45 52 35" fill="none" stroke-width="6" />
+  </g>
+</svg>

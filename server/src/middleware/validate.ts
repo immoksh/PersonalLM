@@ -66,6 +66,19 @@ export function validate(schemas: Schemas): RequestHandler {
 }
 
 /**
+ * Validates the body from inside a handler, for multipart routes where there is
+ * no body yet when `validate()` runs — multer parses it afterwards. Rejects with
+ * the same 400 shape as `validate()`.
+ */
+export function parseBody<S extends z.ZodTypeAny>(req: Request, schema: S): z.infer<S> {
+  const result = schema.safeParse(req.body);
+  if (!result.success) {
+    throw ApiError.badRequest('The submitted data is invalid', toFieldErrors(result.error, 'body'));
+  }
+  return result.data;
+}
+
+/**
  * Typed readers for validated data. The schema argument is used only to infer
  * the result type — pass the same schema the route validated with.
  */

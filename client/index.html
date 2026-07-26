@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="PersonalLM — Express + React full-stack application." />
     <title>PersonalLM</title>
+    <!-- SVG scales to every tab and bookmark size from one file; the PNG is only
+         for iOS, which ignores SVG icons and masks its own corners (hence the
+         square-cornered render). -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#53fa67" />
     <script>
       // Runs before first paint so the correct theme is already on <html> —
       // without this the app flashes dark before React's effect applies light.

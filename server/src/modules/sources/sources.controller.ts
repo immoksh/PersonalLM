@@ -10,7 +10,7 @@ import {
   FILE_SOURCE_KINDS,
 } from '@personallm/shared';
 import type { ApiSuccess, Source, SourceDetail } from '@personallm/shared';
-import { body, params, query } from '../../middleware/validate.js';
+import { body, params, parseBody, query } from '../../middleware/validate.js';
 import { currentUser } from '../../middleware/requireAuth.js';
 import { discardUploads } from '../../middleware/upload.js';
 import { ApiError } from '../../utils/ApiError.js';
@@ -91,9 +91,9 @@ export function createFiles(req: Request, res: Response): void {
   try {
     // Read inside the try: multer has already written the bytes by now, so a
     // missing or unowned notebook has to clean them up like any other failure.
-    // The field is validated here rather than by `validate({ body })`, which
-    // runs before multer has parsed the multipart body at all.
-    const { notebookId } = body(req, notebookTargetSchema);
+    // Parsed here rather than by `validate({ body })`, which runs before multer
+    // has parsed the multipart body at all.
+    const { notebookId } = parseBody(req, notebookTargetSchema);
     const sources = sourcesService.createFileSources(user.id, notebookId, kind, files);
     const payload: ApiSuccess<Source[]> = { data: sources };
     res.status(201).json(payload);
