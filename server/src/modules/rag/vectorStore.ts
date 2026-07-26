@@ -5,20 +5,34 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import type { SourceKind } from '@personallm/shared';
 import { config } from '../../config/rag.js';
 import { logger } from '../../utils/logger.js';
+import type { LocatedChunk } from './chunk.js';
 import { getEmbeddings } from './models.js';
 
 /** Identifying fields copied onto every chunk's payload for a source. */
 export interface SourceRef {
   userId: string;
+  notebookId: string;
   sourceId: string;
   kind: SourceKind;
   title: string;
 }
 
-/** Payload stored alongside every chunk vector, used for filtering and citations. */
+/**
+ * Payload stored alongside every chunk vector, used for filtering and citations.
+ *
+ * The locator fields are carried here rather than looked up later because the
+ * vector *is* the chunk: nothing else in the system knows which page or which
+ * second a given passage came from once ingestion has finished.
+ */
 export interface ChunkMetadata extends SourceRef {
   /** Position of this chunk within its source, for stable ordering/debugging. */
   chunkIndex: number;
+  /** Offsets into the source's stored extracted text. */
+  charStart: number;
+  charEnd: number;
+  page: number | null;
+  startSec: number | null;
+  endSec: number | null;
   [key: string]: unknown;
 }
 
@@ -45,7 +59,6 @@ export async function ensureCollection(): Promise<string> {
       await qdrant.createCollection(name, {
         vectors: {
           size: config.openai.embeddingDimensions,
-          // Cosine matches how OpenAI embeddings are meant to be compared.
           distance: 'Cosine',
         },
       });
@@ -54,8 +67,6 @@ export async function ensureCollection(): Promise<string> {
         size: config.openai.embeddingDimensions,
       });
     } catch (error) {
-      // Another worker may have created it first (409 Conflict); only a
-      // collection that is *still* missing means the failure was real.
       const stillMissing = !(await qdrant.collectionExists(name)).exists;
       if (stillMissing) throw error;
     }
@@ -63,45 +74,23 @@ export async function ensureCollection(): Promise<string> {
     await assertVectorSize(name);
   }
 
-  // Also for collections that predate the indexes, hence outside the branch.
   await ensurePayloadIndexes(name);
   return name;
 }
 
-/**
- * The payload fields every search filters on.
- *
- * Qdrant applies a filter correctly with or without an index, so this is not what
- * keeps one user's chunks out of another's answers — `buildConditions` in
- * `query.ts` does that. What the index buys is *recall*. Filtering an HNSW graph
- * on an unindexed field makes the traversal walk through points that are then all
- * discarded, and `userId` is the most selective filter here once more than one
- * user shares the collection: the search spends its budget among other users'
- * vectors and returns fewer of the asking user's own chunks than exist. An
- * indexed field lets Qdrant build the filterable sub-graph instead, so a user
- * with a small library still gets their best passages back once the collection
- * grows past `indexing_threshold`.
- */
 const INDEXED_PAYLOAD_FIELDS = ['metadata.userId', 'metadata.sourceId'] as const;
 
-/** Declares those indexes. Idempotent: re-declaring an identical one is a no-op. */
 async function ensurePayloadIndexes(name: string): Promise<void> {
   const qdrant = getQdrantClient();
 
   for (const field of INDEXED_PAYLOAD_FIELDS) {
     try {
-      // `wait` so the index is in place before the first search runs against a
-      // freshly created collection, rather than the opening queries going
-      // unindexed while Qdrant applies it in the background.
       await qdrant.createPayloadIndex(name, {
         field_name: field,
         field_schema: 'keyword',
         wait: true,
       });
     } catch (error) {
-      // Not fatal — retrieval stays correctly scoped, just unindexed — so this
-      // must not stop the store from booting. Logged rather than swallowed,
-      // because the cost is silent: slower searches and thinner results.
       logger.warn('Could not create Qdrant payload index', {
         collection: name,
         field,
@@ -160,26 +149,65 @@ export function getVectorStore(): Promise<QdrantVectorStore> {
  */
 export async function upsertChunkBatch(
   source: SourceRef,
-  chunks: string[],
+  chunks: QueuedChunk[],
   startIndex: number,
 ): Promise<number> {
   if (chunks.length === 0) return 0;
   const store = await getVectorStore();
 
-  const documents = chunks.map(
-    (chunk, offset) =>
+  const documents: Array<Document<ChunkMetadata>> = [];
+  const ids: string[] = [];
+
+  chunks.forEach((queued, offset) => {
+    const { text, ...locator } = normalizeChunk(queued);
+    const chunkIndex = startIndex + offset;
+
+    // An empty chunk is rejected by the embeddings API with a message that says
+    // nothing about which source or batch produced it, so it is dropped here —
+    // there is nothing to retrieve in it either way. `chunkIndex` still advances
+    // with the batch offset, so the remaining points keep their stable ids.
+    if (!text) {
+      logger.warn('Skipping empty chunk', { sourceId: source.sourceId, chunkIndex });
+      return;
+    }
+
+    documents.push(
       new Document<ChunkMetadata>({
-        pageContent: chunk,
-        metadata: { ...source, chunkIndex: startIndex + offset },
+        pageContent: text,
+        metadata: { ...source, ...locator, chunkIndex },
       }),
-  );
-  // Deterministic ids make a retried batch overwrite its own points instead of
-  // inserting a second copy — Qdrant upserts by id.
-  const ids = documents.map((_, offset) => chunkPointId(source.sourceId, startIndex + offset));
+    );
+    // Deterministic ids make a retried batch overwrite its own points instead of
+    // inserting a second copy — Qdrant upserts by id.
+    ids.push(chunkPointId(source.sourceId, chunkIndex));
+  });
+
+  if (documents.length === 0) return 0;
   // addDocuments embeds each chunk (OpenAI) and upserts the vectors into Qdrant.
   await store.addDocuments(documents, { ids });
   return documents.length;
 }
+
+/**
+ * A chunk as it arrives off the queue.
+ *
+ * Jobs outlive the code that enqueued them: a deploy that changes this payload
+ * finds the previous version's jobs still in Redis, and workers can run mixed
+ * versions during a rolling restart. Before chunks carried locators they were
+ * plain strings, so both shapes have to be readable — otherwise a legacy job
+ * destructures to `undefined` text and fails the whole source with an opaque
+ * "input cannot be an empty string" from the embeddings API.
+ */
+export type QueuedChunk = LocatedChunk | string;
+
+/** Widens a legacy string chunk to a located one with no known position. */
+function normalizeChunk(chunk: QueuedChunk): LocatedChunk {
+  if (typeof chunk !== 'string') return chunk;
+  return { text: chunk, charStart: 0, charEnd: 0, page: null, startSec: null, endSec: null };
+}
+
+/** Internals exposed for unit tests only. */
+export const __testing = { normalizeChunk };
 
 /** Stable point id for one chunk. Qdrant ids must be a UUID or unsigned int. */
 function chunkPointId(sourceId: string, chunkIndex: number): string {
@@ -198,8 +226,29 @@ function chunkPointId(sourceId: string, chunkIndex: number): string {
  * than by point id) means we never have to track the generated chunk ids.
  */
 export async function deleteSourceVectors(sourceId: string): Promise<void> {
-  await getQdrantClient().delete(config.qdrant.collection, {
+  // `ensureCollection` rather than the configured name directly: ingestion
+  // clears a source's old vectors *before* the first batch is embedded, so on a
+  // brand-new deployment this is the first Qdrant call of all — and deleting
+  // from a collection that does not exist yet is a 404 that fails the whole
+  // ingestion. Creating it here is idempotent and costs one existence check.
+  const collection = await ensureCollection();
+  await getQdrantClient().delete(collection, {
     wait: true,
     filter: { must: [{ key: 'metadata.sourceId', match: { value: sourceId } }] },
+  });
+}
+
+/**
+ * Removes the vectors of several sources at once — what deleting a whole
+ * notebook needs. Filtered on the source ids rather than `notebookId` so it
+ * also catches points indexed before notebooks existed, which carry no
+ * notebook in their payload.
+ */
+export async function deleteVectorsForSources(sourceIds: string[]): Promise<void> {
+  if (sourceIds.length === 0) return;
+  const collection = await ensureCollection();
+  await getQdrantClient().delete(collection, {
+    wait: true,
+    filter: { must: [{ key: 'metadata.sourceId', match: { any: sourceIds } }] },
   });
 }

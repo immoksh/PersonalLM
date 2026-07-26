@@ -72,6 +72,62 @@ const MIGRATIONS: ReadonlyArray<{ id: string; sql: string }> = [
         ON users (google_sub) WHERE google_sub IS NOT NULL;
     `,
   },
+  {
+    id: '004_notebooks',
+    sql: `
+      CREATE TABLE notebooks (
+        id          TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title       TEXT NOT NULL,
+        description TEXT,
+        emoji       TEXT NOT NULL DEFAULT '📓',
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_notebooks_user_sort ON notebooks (user_id, updated_at DESC);
+
+      -- Nullable at first so the column can be added to a table that already
+      -- has rows; the backfill below fills it, and every write path sets it.
+      ALTER TABLE sources ADD COLUMN notebook_id TEXT REFERENCES notebooks(id) ON DELETE CASCADE;
+
+      -- Give every user who already has sources a notebook to hold them, so an
+      -- existing library survives the upgrade instead of vanishing from the UI.
+      INSERT INTO notebooks (id, user_id, title, description, emoji, created_at, updated_at)
+      SELECT
+        lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+        substr(lower(hex(randomblob(2))), 2) || '-a' ||
+        substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))),
+        user_id,
+        'My first notebook',
+        'Everything you added before notebooks existed.',
+        '📓',
+        MIN(created_at),
+        MAX(created_at)
+      FROM sources
+      GROUP BY user_id;
+
+      UPDATE sources
+         SET notebook_id = (SELECT id FROM notebooks WHERE notebooks.user_id = sources.user_id)
+       WHERE notebook_id IS NULL;
+
+      -- Every list query filters on the notebook and orders by recency.
+      CREATE INDEX idx_sources_notebook_created ON sources (notebook_id, created_at DESC);
+    `,
+  },
+  {
+    id: '005_extracted_text',
+    sql: `
+      -- The plain text ingestion indexed, kept so the source viewer can show the
+      -- passage a citation points at without re-fetching or re-parsing the
+      -- original. Character offsets on every chunk address this exact string.
+      ALTER TABLE sources ADD COLUMN extracted_text TEXT;
+      -- Page total for PDFs, so the viewer can render "page 4 of 26".
+      ALTER TABLE sources ADD COLUMN page_count INTEGER;
+      -- Why ingestion failed, surfaced next to the re-index button.
+      ALTER TABLE sources ADD COLUMN error_message TEXT;
+    `,
+  },
 ];
 
 function connect(): Database.Database {

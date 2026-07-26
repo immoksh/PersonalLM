@@ -15,6 +15,9 @@ import {
   createYouTube,
   fileKindParamSchema,
   list,
+  read,
+  readFile,
+  reindex,
   remove,
   sourceIdParamSchema,
 } from './sources.controller.js';
@@ -37,5 +40,14 @@ sourcesRouter.post(
   uploadFiles('files'),
   createFiles,
 );
+
+// The source viewer's two reads: the extracted text a citation's offsets point
+// into, and the original bytes behind an upload.
+sourcesRouter.get('/:id', validate({ params: sourceIdParamSchema }), read);
+sourcesRouter.get('/:id/file', validate({ params: sourceIdParamSchema }), readFile);
+
+// POST rather than PUT: re-indexing is an action with side effects, not an
+// idempotent replacement of the source.
+sourcesRouter.post('/:id/reindex', validate({ params: sourceIdParamSchema }), reindex);
 
 sourcesRouter.delete('/:id', validate({ params: sourceIdParamSchema }), remove);

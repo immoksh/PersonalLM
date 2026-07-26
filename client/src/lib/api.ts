@@ -5,6 +5,7 @@ import type {
   ChatRequest,
   ChatResponse,
   ChatStreamEvent,
+  CreateNotebookInput,
   CreateTextSourceInput,
   CreateWebsiteSourceInput,
   CreateYouTubeSourceInput,
@@ -12,7 +13,10 @@ import type {
   FieldErrors,
   FileSourceKind,
   ListSourcesQuery,
+  Notebook,
   Source,
+  SourceDetail,
+  UpdateNotebookInput,
 } from '@personallm/shared';
 import { parseEventStream } from './sse';
 
@@ -166,14 +170,27 @@ export const api = {
     logout: () => request<void>('/auth/logout', { method: 'POST' }),
     me: () => request<AuthResponse>('/auth/me'),
   },
+  notebooks: {
+    list: () => request<Notebook[]>('/notebooks'),
+    read: (id: string) => request<Notebook>(`/notebooks/${id}`),
+    create: (input: CreateNotebookInput) =>
+      request<Notebook>('/notebooks', { method: 'POST', body: body(input) }),
+    update: (id: string, input: UpdateNotebookInput) =>
+      request<Notebook>(`/notebooks/${id}`, { method: 'PATCH', body: body(input) }),
+    /** Takes the notebook's sources, their files and their vectors with it. */
+    remove: (id: string) => request<void>(`/notebooks/${id}`, { method: 'DELETE' }),
+  },
   sources: {
-    list: (params: ListSourcesQuery = {}) => {
-      const search = new URLSearchParams();
+    list: (params: ListSourcesQuery) => {
+      const search = new URLSearchParams({ notebookId: params.notebookId });
       if (params.kind) search.set('kind', params.kind);
       if (params.q) search.set('q', params.q);
-      const qs = search.toString();
-      return request<Source[]>(`/sources${qs ? `?${qs}` : ''}`);
+      return request<Source[]>(`/sources?${search.toString()}`);
     },
+    /** The source plus its extracted text — what the viewer highlights into. */
+    read: (id: string) => request<SourceDetail>(`/sources/${id}`),
+    /** URL of the original upload, for embedding a PDF in the viewer. */
+    fileUrl: (id: string) => `${BASE_URL}/sources/${id}/file`,
     createText: (input: CreateTextSourceInput) =>
       request<Source>('/sources/text', { method: 'POST', body: body(input) }),
     createWebsite: (input: CreateWebsiteSourceInput) =>
@@ -181,11 +198,16 @@ export const api = {
     createYouTube: (input: CreateYouTubeSourceInput) =>
       request<Source>('/sources/youtube', { method: 'POST', body: body(input) }),
     /** Uploads every file in one multipart request; returns one Source each. */
-    createFiles: (kind: FileSourceKind, files: File[]) => {
+    createFiles: (notebookId: string, kind: FileSourceKind, files: File[]) => {
       const form = new FormData();
+      // Before the files, so the server has parsed it by the time it reads the
+      // body — multipart fields arrive in the order they are appended.
+      form.append('notebookId', notebookId);
       for (const file of files) form.append('files', file);
       return request<Source[]>(`/sources/files/${kind}`, { method: 'POST', body: form });
     },
+    /** Re-runs extraction and embedding for a source that already exists. */
+    reindex: (id: string) => request<Source>(`/sources/${id}/reindex`, { method: 'POST' }),
     remove: (id: string) => request<void>(`/sources/${id}`, { method: 'DELETE' }),
   },
   chat: {

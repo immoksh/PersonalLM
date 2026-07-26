@@ -13,6 +13,8 @@ import { useCreateWebsiteSource, useCreateYouTubeSource } from '../useSources';
 import { SOURCE_TYPES } from '../sourceTypes';
 
 interface UrlModalProps {
+  /** Notebook the new source is filed under. */
+  notebookId: string;
   kind: 'website' | 'youtube';
   open: boolean;
   onClose: () => void;
@@ -35,7 +37,7 @@ const COPY = {
 } as const;
 
 /** Collects a single URL for the two link-backed kinds. */
-export function UrlModal({ kind, open, onClose, onDone }: UrlModalProps) {
+export function UrlModal({ notebookId, kind, open, onClose, onDone }: UrlModalProps) {
   const meta = SOURCE_TYPES[kind];
   const copy = COPY[kind];
 
@@ -65,7 +67,11 @@ export function UrlModal({ kind, open, onClose, onDone }: UrlModalProps) {
     setError(null);
 
     const schema = kind === 'website' ? createWebsiteSourceSchema : createYouTubeSourceSchema;
-    const parsed = schema.safeParse({ url, ...(title.trim() ? { title: title.trim() } : {}) });
+    const parsed = schema.safeParse({
+      notebookId,
+      url,
+      ...(title.trim() ? { title: title.trim() } : {}),
+    });
 
     if (!parsed.success) {
       setFields(toFormErrors(parsed.error).fields);

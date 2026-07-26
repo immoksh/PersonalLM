@@ -116,7 +116,12 @@ const titleSchema = z
   .trim()
   .max(MAX_TITLE_LENGTH, `Title must be at most ${MAX_TITLE_LENGTH} characters`);
 
-export const createTextSourceSchema = z.object({
+/** Every create endpoint takes the notebook the source is being filed under. */
+export const notebookTargetSchema = z.object({
+  notebookId: z.string().uuid('Invalid notebook id'),
+});
+
+export const createTextSourceSchema = notebookTargetSchema.extend({
   title: titleSchema.min(1, 'Give this source a title'),
   /** Rich-text HTML produced by the editor. */
   content: z
@@ -127,12 +132,12 @@ export const createTextSourceSchema = z.object({
   plainText: z.string().max(MAX_TEXT_LENGTH).default(''),
 });
 
-export const createWebsiteSourceSchema = z.object({
+export const createWebsiteSourceSchema = notebookTargetSchema.extend({
   title: titleSchema.optional(),
   url: httpUrlSchema,
 });
 
-export const createYouTubeSourceSchema = z.object({
+export const createYouTubeSourceSchema = notebookTargetSchema.extend({
   title: titleSchema.optional(),
   url: z
     .string()
@@ -142,6 +147,8 @@ export const createYouTubeSourceSchema = z.object({
 });
 
 export const listSourcesQuerySchema = z.object({
+  /** Required: a source list is always scoped to one notebook. */
+  notebookId: z.string().uuid('Invalid notebook id'),
   kind: z.enum(SOURCE_KINDS).optional(),
   q: z.string().trim().max(120).optional(),
 });
@@ -156,6 +163,8 @@ export type SourceStatus = 'ready' | 'processing' | 'failed';
 export interface Source {
   id: string;
   userId: string;
+  /** The notebook this source is filed under. Retrieval never crosses it. */
+  notebookId: string;
   kind: SourceKind;
   title: string;
   /** Website / YouTube sources only. */
@@ -169,6 +178,74 @@ export interface Source {
   fileSize: number | null;
   status: SourceStatus;
   createdAt: string;
+}
+
+// --- Passage locators ----------------------------------------------------
+
+/**
+ * Where a passage physically sits inside its source.
+ *
+ * This is what turns a citation into something you can open: the character
+ * range addresses the source's extracted text (so a viewer can highlight the
+ * exact words), while `page` and `startSec` address the *original* artefact —
+ * the PDF page to jump to, or the second to seek the video to. Which fields
+ * are populated depends on the kind, so all of them are nullable:
+ *
+ * | Kind       | charStart/charEnd | page | startSec/endSec |
+ * | ---------- | ----------------- | ---- | --------------- |
+ * | pdf        | yes               | yes  | no              |
+ * | youtube    | yes               | no   | yes             |
+ * | transcript | yes               | no   | yes (VTT/SRT)   |
+ * | text       | yes               | no   | no              |
+ * | website    | yes               | no   | no              |
+ */
+export interface PassageLocator {
+  /** Character offsets into `SourceDetail.extractedText`. */
+  charStart: number;
+  charEnd: number;
+  /** 1-based page number — PDFs only. */
+  page: number | null;
+  /** Seconds into the media — YouTube and timed transcripts only. */
+  startSec: number | null;
+  endSec: number | null;
+}
+
+/** A source plus the extracted text a viewer needs to show and highlight it. */
+export interface SourceDetail extends Source {
+  /**
+   * The plain text ingestion actually indexed, which is what `PassageLocator`
+   * offsets address. Null when the source has not been indexed yet, or was
+   * created while retrieval was disabled.
+   */
+  extractedText: string | null;
+  /** Whether the original file can be streamed from `/sources/:id/file`. */
+  hasFile: boolean;
+  /** Total pages, for PDFs that recorded them during extraction. */
+  pageCount: number | null;
+  /** Set when ingestion failed, so the viewer can explain what went wrong. */
+  errorMessage: string | null;
+}
+
+/** `93` -> `1:33`, `3702` -> `1:01:42`. Used by transcript and video citations. */
+export function formatTimestamp(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${minutes}:${pad(rest)}`;
+}
+
+/** Deep-links a YouTube watch page to the second a passage starts at. */
+export function youTubeWatchUrl(videoId: string, startSec?: number | null): string {
+  const base = `https://www.youtube.com/watch?v=${videoId}`;
+  return startSec && startSec > 0 ? `${base}&t=${Math.floor(startSec)}s` : base;
+}
+
+/** The embed player, muted of related videos and seeked to the cited moment. */
+export function youTubeEmbedUrl(videoId: string, startSec?: number | null): string {
+  const start = startSec && startSec > 0 ? Math.floor(startSec) : 0;
+  return `https://www.youtube.com/embed/${videoId}?start=${start}&rel=0`;
 }
 
 export const SOURCE_KIND_LABELS: Record<SourceKind, string> = {

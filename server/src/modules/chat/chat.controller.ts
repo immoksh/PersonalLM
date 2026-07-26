@@ -9,9 +9,9 @@ import { answerQuestion, streamAnswer } from '../rag/chat.js';
 
 export async function ask(req: Request, res: Response): Promise<void> {
   const user = currentUser(req);
-  const { question, sourceIds } = body(req, chatRequestSchema);
+  const { notebookId, question, sourceIds } = body(req, chatRequestSchema);
 
-  const answer = await answerQuestion(user.id, question, sourceIds);
+  const answer = await answerQuestion({ userId: user.id, notebookId, question, sourceIds });
 
   const payload: ApiSuccess<ChatResponse> = { data: answer };
   res.json(payload);
@@ -19,12 +19,15 @@ export async function ask(req: Request, res: Response): Promise<void> {
 
 export async function askStream(req: Request, res: Response, next: NextFunction): Promise<void> {
   const user = currentUser(req);
-  const { question, sourceIds } = body(req, chatRequestSchema);
+  const { notebookId, question, sourceIds } = body(req, chatRequestSchema);
 
   const aborter = new AbortController();
   res.on('close', () => aborter.abort());
 
-  const events = streamAnswer(user.id, question, sourceIds, aborter.signal);
+  const events = streamAnswer(
+    { userId: user.id, notebookId, question, sourceIds },
+    aborter.signal,
+  );
   let first: IteratorResult<ChatStreamEvent>;
   try {
     first = await events.next();

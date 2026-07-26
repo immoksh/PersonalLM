@@ -1,22 +1,31 @@
 import { useState } from 'react';
 import type { SourceKind } from '@personallm/shared';
 import { useDebounced } from '@/lib/useDebounced';
+import { useNotebook } from '@/features/notebooks/notebook-context';
 import { useAddSource } from '@/features/sources/add-source-context';
 import { useSources } from '@/features/sources/useSources';
 import { SourceCard } from '@/features/sources/SourceCard';
 import { SOURCE_TYPE_LIST } from '@/features/sources/sourceTypes';
+import { SourceViewer, useSourceViewer } from '@/features/sources/viewer/SourceViewer';
 import { LayersIcon, PlusIcon, SearchIcon } from '@/components/icons';
 import { Alert, Button, EmptyState, Spinner, TextInput, cx } from '@/components/ui';
 
 type Filter = SourceKind | 'all';
 
 export function SourcesPage() {
+  const notebook = useNotebook();
   const { open: openAddSource } = useAddSource();
+  const viewer = useSourceViewer();
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
 
   const debouncedSearch = useDebounced(search);
-  const { data: sources, isPending, isFetching, error } = useSources(filter, debouncedSearch);
+  const {
+    data: sources,
+    isPending,
+    isFetching,
+    error,
+  } = useSources(notebook.id, filter, debouncedSearch);
 
   const isFiltered = filter !== 'all' || debouncedSearch !== '';
   const items = sources ?? [];
@@ -26,13 +35,14 @@ export function SourcesPage() {
       {/* No Add Source button here: the sidebar carries it, and a second one
           would crowd the avatar that now sits in the top-right corner. */}
       <header>
-        <h1 className="text-3xl font-semibold tracking-tight text-text">
-          Your <span className="text-gradient">sources</span>
+        <h1 className="flex items-center gap-2.5 text-3xl font-semibold tracking-tight text-text">
+          <span aria-hidden>{notebook.emoji}</span>
+          <span className="truncate">{notebook.title}</span>
         </h1>
         <p className="mt-1.5 text-sm text-muted">
           {sources
-            ? `${sources.length} ${sources.length === 1 ? 'source' : 'sources'} in your library`
-            : 'Loading your library…'}
+            ? `${sources.length} ${sources.length === 1 ? 'source' : 'sources'} in this notebook`
+            : 'Loading this notebook…'}
         </p>
       </header>
 
@@ -84,7 +94,7 @@ export function SourcesPage() {
       ) : items.length === 0 ? (
         <EmptyState
           icon={<LayersIcon className="size-6" />}
-          title={isFiltered ? 'Nothing matches that' : 'Your library is empty'}
+          title={isFiltered ? 'Nothing matches that' : 'This notebook is empty'}
           description={
             isFiltered
               ? 'Try a different search term or clear the filter.'
@@ -114,10 +124,18 @@ export function SourcesPage() {
         // rows; SourceCard pins its footer to the bottom to suit that.
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {items.map((source) => (
-            <SourceCard key={source.id} source={source} />
+            <SourceCard
+              key={source.id}
+              source={source}
+              // Opened without a passage: from the library there is no citation
+              // to position on, so it starts at the top of the document.
+              onOpen={() => viewer.open({ sourceId: source.id, passage: null })}
+            />
           ))}
         </div>
       )}
+
+      <SourceViewer {...viewer} />
     </div>
   );
 }

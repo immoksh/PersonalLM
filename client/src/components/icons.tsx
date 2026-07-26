@@ -65,6 +65,13 @@ export const CloseIcon = (props: IconProps) => (
   </svg>
 );
 
+export const RefreshIcon = (props: IconProps) => (
+  <svg {...base(props)}>
+    <path d="M20.5 12a8.5 8.5 0 1 1-2.49-6.01" />
+    <path d="M20.5 4v5h-5" />
+  </svg>
+);
+
 export const TrashIcon = (props: IconProps) => (
   <svg {...base(props)}>
     <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />

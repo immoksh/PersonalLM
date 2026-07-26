@@ -5,15 +5,17 @@ import { config } from '../config/rag.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { failIngestion } from '../modules/rag/ingest.js';
-import { upsertChunkBatch, type SourceRef } from '../modules/rag/vectorStore.js';
+import type { LocatedChunk } from '../modules/rag/chunk.js';
+import { upsertChunkBatch, type QueuedChunk, type SourceRef } from '../modules/rag/vectorStore.js';
 import { createRedisConnection } from './connection.js';
-
 
 const QUEUE_NAME = 'chunk-embedding';
 
 export interface EmbeddingJobData extends SourceRef {
   startIndex: number;
-  chunks: string[];
+  /** Written as `LocatedChunk[]`; read as `QueuedChunk[]`, since jobs queued by
+   *  an earlier version are still in Redis after a deploy. */
+  chunks: QueuedChunk[];
 }
 
 const JOB_OPTIONS = {
@@ -39,7 +41,7 @@ function getQueue(): Queue<EmbeddingJobData> {
 
 export async function enqueueEmbeddingBatches(
   ref: SourceRef,
-  chunks: string[],
+  chunks: LocatedChunk[],
   parent: ParentOptions,
 ): Promise<number> {
   const { batchSize } = config.embedding;
@@ -85,7 +87,7 @@ export function startEmbeddingWorker(): Worker<EmbeddingJobData> | null {
       error: error.message,
     });
     if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
-      failIngestion(job.data.sourceId);
+      failIngestion(job.data.sourceId, `Embedding failed: ${error.message}`);
     }
   });
   worker.on('error', (error) => logger.error('Embedding worker error', { error: error.message }));

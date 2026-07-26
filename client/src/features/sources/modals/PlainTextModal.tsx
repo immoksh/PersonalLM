@@ -18,6 +18,8 @@ import { useCreateTextSource } from '../useSources';
 import { SOURCE_TYPES } from '../sourceTypes';
 
 interface PlainTextModalProps {
+  /** Notebook the new source is filed under. */
+  notebookId: string;
   open: boolean;
   onClose: () => void;
   onDone: (count: number) => void;
@@ -26,7 +28,7 @@ interface PlainTextModalProps {
 const EMPTY = { html: '', text: '', isEmpty: true };
 
 /** Rich-text composer for `text` sources. */
-export function PlainTextModal({ open, onClose, onDone }: PlainTextModalProps) {
+export function PlainTextModal({ notebookId, open, onClose, onDone }: PlainTextModalProps) {
   const meta = SOURCE_TYPES.text;
   const createSource = useCreateTextSource();
 
@@ -52,6 +54,7 @@ export function PlainTextModal({ open, onClose, onDone }: PlainTextModalProps) {
     setError(null);
 
     const parsed = createTextSourceSchema.safeParse({
+      notebookId,
       title,
       // An "empty" TipTap doc is still `<p></p>`, so use its own emptiness check.
       content: doc.isEmpty ? '' : doc.html,

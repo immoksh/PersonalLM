@@ -5,7 +5,9 @@ import { ThemeProvider } from '@/features/theme/ThemeProvider';
 import { AuthProvider } from '@/features/auth/AuthProvider';
 import { AppLayout } from '@/components/AppLayout';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { NotebookRoute } from '@/features/notebooks/NotebookRoute';
 import { ChatPage } from '@/pages/ChatPage';
+import { NotebooksPage } from '@/pages/NotebooksPage';
 import { SourcesPage } from '@/pages/SourcesPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 
@@ -21,9 +23,19 @@ export function App() {
               <Routes>
                 {/* No /login route: AppLayout gates the content area in place. */}
                 <Route element={<AppLayout />}>
-                  {/* Chat is the landing screen; the library lives one click away. */}
-                  <Route path="/" element={<ChatPage />} />
-                  <Route path="/sources" element={<SourcesPage />} />
+                  {/* The shelf of notebooks is the landing screen — there is no
+                      app-wide library to land on, since every source belongs to
+                      exactly one notebook. */}
+                  <Route path="/" element={<NotebooksPage />} />
+                  <Route path="/notebooks" element={<NotebooksPage />} />
+
+                  {/* Everything below is scoped to one notebook, which
+                      NotebookRoute resolves before any of it renders. */}
+                  <Route path="/notebooks/:notebookId" element={<NotebookRoute />}>
+                    <Route index element={<ChatPage />} />
+                    <Route path="sources" element={<SourcesPage />} />
+                  </Route>
+
                   <Route path="*" element={<NotFoundPage />} />
                 </Route>
               </Routes>

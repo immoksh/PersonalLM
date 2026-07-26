@@ -8,6 +8,8 @@ import { useUploadSources } from '../useSources';
 import { SOURCE_TYPES } from '../sourceTypes';
 
 interface FileUploadModalProps {
+  /** Notebook the new source is filed under. */
+  notebookId: string;
   kind: FileSourceKind;
   open: boolean;
   onClose: () => void;
@@ -16,7 +18,13 @@ interface FileUploadModalProps {
 
 /** File upload for the two file-backed kinds: a single PDF, or a batch of
  *  VTT/transcript files. The per-kind limit is enforced by the Dropzone. */
-export function FileUploadModal({ kind, open, onClose, onDone }: FileUploadModalProps) {
+export function FileUploadModal({
+  notebookId,
+  kind,
+  open,
+  onClose,
+  onDone,
+}: FileUploadModalProps) {
   const meta = SOURCE_TYPES[kind];
   const upload = useUploadSources();
 
@@ -33,7 +41,7 @@ export function FileUploadModal({ kind, open, onClose, onDone }: FileUploadModal
   const submit = async () => {
     setError(null);
     try {
-      const created = await upload.mutateAsync({ kind, files });
+      const created = await upload.mutateAsync({ notebookId, kind, files });
       setFiles([]);
       onDone(created.length);
     } catch (caught) {

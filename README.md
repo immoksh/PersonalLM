@@ -2,10 +2,19 @@
 
 Ask questions about your own documents and get answers that cite them.
 
-You sign in with Google, add sources — PDFs, web pages, YouTube videos, transcripts, or text you
-type — and PersonalLM reads them, indexes them, and answers questions grounded in nothing but
-that library. Every answer streams in token by token with inline `[1]` markers that expand into
-the exact passages behind the claim.
+You sign in with Google, create a **notebook**, and add sources to it — PDFs, web pages, YouTube
+videos, transcripts, or text you type. PersonalLM reads them, indexes them, and answers questions
+grounded in nothing but that notebook's sources. Every answer streams in token by token with
+inline `[1]` markers that expand into the exact passages behind the claim.
+
+Two properties are load-bearing:
+
+- **Notebooks are isolated.** Each one is its own knowledge base. A question asked in one can only
+  be answered from the sources filed in it — retrieval is scoped to that notebook's source ids,
+  resolved per request, so nothing leaks across the boundary.
+- **Every citation is inspectable.** A citation is not just a name — it carries the passage's
+  position in the original artefact, so clicking it opens **a PDF at the cited page**, **a video
+  seeked to the cited second**, or **the extracted text with the cited characters highlighted**.
 
 It is a full-stack TypeScript monorepo: an **Express 5** JSON API, a **React 19** single-page
 client, and a shared contract package that both import so the API can never silently drift from
@@ -113,9 +122,31 @@ Without them the gate says so plainly rather than rendering a button that cannot
 > PostgreSQL — token verification, the session cookie and the route guards are all independent of
 > the store.
 
-## 3. Adding a source
+## 3. Notebooks: the isolation boundary
+
+Signing in lands on the notebook shelf, not on a library — there is no account-wide pile of
+sources. Every source belongs to exactly one notebook, and every route below `/notebooks/:id` is
+scoped to it.
+
+- **The server enforces it in one place.** `assertOwned` in
+  [notebooks.service.ts](server/src/modules/notebooks/notebooks.service.ts) is the single gate that
+  every source, upload and chat route passes through, so "can this user read this notebook?" is
+  answered once rather than re-derived per endpoint. A notebook you don't own reports **404, not
+  403**, so ids cannot be probed.
+- **The client cannot forget which one it is in.** `NotebookRoute` resolves `:notebookId` before
+  any nested route renders, and `useNotebook()` throws outside one. There is no "list all sources"
+  call to make by accident.
+- **Deleting a notebook takes everything with it**: the source rows cascade in SQLite, and the
+  uploaded files and Qdrant vectors — which live outside the database — are collected before the
+  row goes and cleaned up explicitly.
+
+Existing libraries are not lost on upgrade: migration `004_notebooks` creates one notebook per
+user who already had sources and files every one of them into it.
+
+## 4. Adding a source
 
 `Add Source` in the sidebar opens a slide-over listing five types; picking one opens its dialog.
+The button is disabled outside a notebook, because there would be nowhere to file the result.
 
 | Type               | Input                                   | Validation                                            |
 | ------------------ | --------------------------------------- | ----------------------------------------------------- |
@@ -149,7 +180,7 @@ What happens on submit:
    that switches itself off once no source is in `processing`, flipping the dots green the moment
    the last Qdrant upsert lands.
 
-## 4. Ingestion: two queues, two stages
+## 5. Ingestion: two queues, two stages
 
 Embedding and Qdrant upserts are far too slow to run on the request, so ingestion is queued —
 and split across **two** BullMQ queues rather than one.
@@ -160,31 +191,49 @@ and split across **two** BullMQ queues rather than one.
 
 1. Load the row. If it's gone (deleted before the job ran), stop quietly.
 2. Mark it `processing`.
-3. **Extract text, dispatching on kind** ([rag/parsers/](server/src/modules/rag/parsers/)):
-   - `pdf` — `pdf-parse`, concatenating page text; the pdf.js worker is destroyed in a `finally`.
+3. **Extract text as _located segments_** ([rag/parsers/](server/src/modules/rag/parsers/)). Each
+   parser returns `{ text, page?, startSec?, endSec? }[]` rather than one flat string, because the
+   position it knows about is the only place that information exists — once it is dropped, no
+   later stage can recover which page or second a passage came from.
+   - `pdf` — `pdf-parse`, **one segment per page**, carrying the page number and the page total;
+     pages with no text layer are skipped so they cannot claim a slice of the document. The
+     pdf.js worker is destroyed in a `finally`.
    - `website` — `fetch` + Cheerio, stripping `script/style/nav/header/footer/svg` and preferring
      `<main>` then `<article>` then `<body>`. Capped at 5 MB and a 15s timeout, and guarded
      against **SSRF**: http(s) only, and the _resolved_ address must be public, so a signed-in
      user cannot make the server fetch cloud metadata (`169.254.169.254`) or localhost admin
-     panels.
-   - `youtube` — transcript fetched by video id; a video without captions fails with that reason.
-   - `transcript` — `.vtt`/`.srt`/`.txt` reduced to prose: timing cues, `WEBVTT` headers, sequence
-     numbers, inline tags and consecutively repeated auto-caption lines all dropped.
+     panels. A URL that actually serves a PDF is dispatched to the PDF parser, so it keeps page
+     numbers like any upload; other binary types are refused rather than decoded as mojibake.
+   - `youtube` — transcript fetched by video id, **keeping each cue's offset** so a citation can
+     deep-link the player. The library reports milliseconds on one code path and seconds on
+     another with nothing to distinguish them, so the unit is inferred from the median cue
+     duration — a caption is never on screen for 100 seconds, so anything above that is
+     milliseconds.
+   - `transcript` — `.vtt`/`.srt` parsed **as cues**, pairing each timing line with its text;
+     headers, sequence numbers, inline tags and repeated auto-caption lines are dropped. A file
+     with no cues at all (a plain `.txt`) falls back to one untimed segment.
    - `text` — the editor's HTML tag-stripped, with block elements turned into newlines so
      paragraphs don't run together. A `never` exhaustiveness guard means a new `SourceKind`
      cannot compile without a parser.
-4. **Chunk it** ([rag/chunk.ts](server/src/modules/rag/chunk.ts)): ~1000 characters with 150
-   characters of overlap (`CHUNK_SIZE` / `CHUNK_OVERLAP`). Horizontal whitespace is collapsed but
-   newlines survive, so paragraph boundaries stay available as cut points; cuts land on
-   whitespace unless that would shrink a chunk below half size, and each chunk's start is snapped
-   to a word boundary. Zero chunks throws, so the source is marked `failed` rather than "ready,
-   empty".
-5. **Clear the source's existing vectors once**, by payload filter — re-ingesting replaces rather
+4. **Flatten and chunk** ([rag/document.ts](server/src/modules/rag/document.ts) →
+   [rag/chunk.ts](server/src/modules/rag/chunk.ts)). `buildDocument` joins the segments into one
+   canonical string, normalising whitespace **once** and recording where each segment landed.
+   `chunkDocument` then splits that string into ~1000-character chunks with 150 of overlap
+   (`CHUNK_SIZE` / `CHUNK_OVERLAP`), cutting on whitespace unless that would shrink a chunk below
+   half size, and resolves each chunk's locator from the segments it overlaps — the page it
+   starts on, and for timed media the span from its first cue to its last. Zero chunks throws, so
+   the source is marked `failed` rather than "ready, empty".
+5. **Store the canonical text on the source row, verbatim.** Every chunk's `charStart`/`charEnd`
+   indexes this exact string, which is what lets the viewer highlight a cited passage without
+   re-parsing the PDF or re-fetching the page. Re-normalising it anywhere downstream would shift
+   the offsets out from under every citation — [chunk.test.ts](server/src/modules/rag/chunk.test.ts)
+   pins that invariant.
+6. **Clear the source's existing vectors once**, by payload filter — re-ingesting replaces rather
    than accumulates. Done here, before any batch is queued, because the batches upsert by
    deterministic id and must not delete each other's points.
-6. **Fan out** `EMBED_BATCH_SIZE` chunks per job onto the embedding queue, as BullMQ **children**
+7. **Fan out** `EMBED_BATCH_SIZE` chunks per job onto the embedding queue, as BullMQ **children**
    of this job.
-7. Persist `step: 'embedding'` onto the job and **park in waiting-children**. BullMQ re-runs the
+8. Persist `step: 'embedding'` onto the job and **park in waiting-children**. BullMQ re-runs the
    processor from the top once every child finishes, so the step lives on the job rather than in
    memory — the re-run resumes at step two instead of re-extracting the whole source.
 
@@ -216,11 +265,25 @@ and split across **two** BullMQ queues rather than one.
   on the API and run `npm run start:worker` to move them out. `INGEST_CONCURRENCY` bounds how many
   sources one worker extracts at once, `EMBED_CONCURRENCY` how many batches it embeds at once.
 
-## 5. Asking a question: multi-query retrieval
+## 6. Asking a question: multi-query retrieval
 
-`POST /api/chat/stream` with `{ question, sourceIds? }`. Retrieval
-([rag/query.ts](server/src/modules/rag/query.ts)) does considerably more than embed the question
-and search — a single phrasing of a question is a poor probe into a document collection, so it
+`POST /api/chat/stream` with `{ notebookId, question, sourceIds? }`.
+
+**Scoping comes first, and it is what makes notebooks isolated.** Before anything is embedded,
+`retrievableSourceIds` reads the notebook's `ready` sources straight from SQLite and every Qdrant
+search runs filtered to that id list (plus `userId`, so a bug in the id resolution still cannot
+cross accounts). An optional `sourceIds` from the client narrows further, always by
+**intersection** — ids belonging to another notebook are dropped rather than honoured, so the
+parameter can only ever shrink the scope. An empty notebook short-circuits before the model is
+called.
+
+Filtering on source ids rather than a `notebookId` in the payload is deliberate: it is exact (a
+source deleted a moment ago cannot answer), and it keeps working for vectors indexed before
+notebooks existed, whose payloads carry no notebook at all.
+
+Retrieval itself ([rag/query.ts](server/src/modules/rag/query.ts)) does considerably more than
+embed the question and search — a single phrasing of a question is a poor probe into a document
+collection, so it
 searches with several.
 
 1. **Two LLM calls run in parallel** off the raw question:
@@ -255,21 +318,28 @@ through points it then discards, and once several users share a collection `user
 selective filter there is. Without the index, a user with a small library would get back fewer of
 their own passages than exist.
 
-## 6. Answering, and streaming it back
+## 7. Answering, and streaming it back
 
 [rag/chat.ts](server/src/modules/rag/chat.ts)
 
 1. **Chunks are grouped by source** and numbered `[1]`, `[2]`, … A source contributing several
    passages gets _one_ number, with its passages joined by `…` — so the reference list reads like
-   a bibliography rather than a list of fragments.
+   a bibliography rather than a list of fragments. Each passage is labelled with where it came
+   from (`(p. 12)`, `(at 4:05)`), which the model tends to carry into its prose.
 2. **The prompt** pins the model to those sources: use only what is numbered below, say so if the
    answer isn't there, and cite every claim inline as `[n]` right after the sentence it supports.
-   Temperature is 0.2 — low, but non-zero for natural phrasing. Retrieval returning nothing
-   short-circuits before the model is ever called, with a plain "I couldn't find anything in your
-   sources" reply.
+   It also fixes the **output format** — Markdown, with lists for parallel points and a table only
+   for genuine comparisons — because a model left to guess emits Markdown anyway, and a renderer
+   has to know what it is being handed. Temperature is 0.2 — low, but non-zero for natural
+   phrasing. Retrieval returning nothing
+   short-circuits before the model is ever called, with a plain "I couldn't find anything in this
+   notebook" reply — distinct from the "no indexed sources yet" one, because an empty notebook is
+   a setup problem and a miss is a phrasing problem.
 3. **Citations are emitted first**, as a single SSE event, before generation starts. Each carries
-   the source's title, kind, URL (websites and YouTube only), passage count, best cosine score and
-   up to three snippets, best match first, each collapsed and clipped to 200 characters.
+   the source's title, kind, URL, video id, passage count, best cosine score, and up to three
+   **passages**, best match first. A passage is not just a snippet: it carries its
+   `charStart`/`charEnd` into the stored extracted text plus its `page` or `startSec`/`endSec` —
+   the locator the source viewer needs to open it in place.
 4. **Then answer tokens stream**, one `token` event each, terminated by exactly one `done` — or an
    `error` event carrying a stable code if generation breaks mid-flight.
 5. **Transport is SSE over `fetch`, not `EventSource`.** `EventSource` only speaks GET and the
@@ -289,21 +359,75 @@ On the client ([useChat.ts](client/src/features/chat/useChat.ts)):
   indicator, which is exactly the retrieval wait.
 - A `useRef` guards double submits alongside the state flag, because state only reaches the guard
   on the next render and two submits in the same tick would both get through.
+- **The answer renders as Markdown while it streams**
+  ([Markdown.tsx](client/src/features/chat/Markdown.tsx)) — headings, nested lists, tables, code,
+  quotes and emphasis. It is ~300 lines rather than a library because the inline `[n]` markers have
+  to be interleaved with the formatting at the text-node level, and because every construct in it
+  requires its closing delimiter: a half-written `**bold` or `[1` stays literal until the rest
+  arrives instead of flickering between styles token by token. Links are rendered only for
+  `http(s)` hrefs, since the href is model output. `_underscore_` italics are deliberately not
+  supported — mangling a `snake_case` identifier is worse than not styling the rarer construct.
 - Citations arrive first but are **held back until the answer lands**, then rendered as a numbered
   reference list. Inline `[n]` markers become chips that scroll to and focus their reference;
-  expanding one shows the actual passages, which is what makes a citation checkable. A marker the
-  citation list doesn't cover stays plain text rather than linking to nothing, and a half-streamed
-  `[1` stays literal until its closing bracket arrives.
+  expanding one lists its passages, each tagged with `p. 12` or `4:05` and clickable straight into
+  the source viewer. A marker the citation list doesn't cover stays plain text rather than linking
+  to nothing, and a half-streamed `[1` stays literal until its closing bracket arrives.
 - **Chat is single-turn and in-memory.** Each question retrieves against itself alone — no history
   is sent, so follow-ups must restate their subject — and nothing survives a reload.
 
-## 7. Deleting a source
+## 8. The source viewer: following a citation back
+
+Clicking a passage opens [SourceViewer](client/src/features/sources/viewer/SourceViewer.tsx),
+which loads `GET /api/sources/:id` — the source plus the extracted text its offsets address — and
+positions itself using the locator the citation carried:
+
+| Kind         | What opens                                                                         |
+| ------------ | ---------------------------------------------------------------------------------- |
+| `pdf`        | The original file in an `<iframe>` at `#page=N`, served by `GET /sources/:id/file` |
+| `youtube`    | The embedded player seeked to the cited second, plus a timestamped watch link      |
+| `website`    | A prominent link out — most sites refuse to be framed, so a frame would just break |
+| `text`       | The extracted text with the cited characters highlighted                           |
+| `transcript` | The same, scrolled to the cued line                                                |
+
+In every case the **indexed text is shown alongside** with the passage marked, because that text
+is what the answer was actually generated from — being able to read it is what makes a citation
+verifiable rather than merely plausible.
+
+Two details matter more than they look:
+
+- **The highlight is sliced by offset, never searched for.** A passage can appear verbatim several
+  times in a document, and searching would mark the first occurrence rather than the one the
+  answer used. The offsets come from the indexed chunk, so they are the right occurrence by
+  construction. They are clamped before slicing, so a range that outlived a re-index degrades to
+  no highlight instead of rendering nothing.
+- **`GET /sources/:id/file` is ownership-checked and `Cache-Control: private`.** It streams one
+  user's document behind their session cookie, `inline` so the browser renders it, with the
+  filename passed through `path.basename` so a user-chosen name cannot inject header syntax.
+
+Sources indexed **before** this existed have no stored text and no locators. They still answer
+questions — retrieval is unaffected — but their citations open at the top of the document rather
+than at the passage. Re-index them once to pick up page numbers and highlighting.
+
+## 9. Deleting a source
 
 `DELETE /api/sources/:id` → the row is checked for ownership (**404, not 403**, so ids cannot be
 probed), deleted, its uploaded file removed from disk, and its vectors dropped from Qdrant by
 payload filter — no need to have tracked the generated chunk ids. The Qdrant delete is
 best-effort: a failure there is logged but must not fail the request, since the row is already
 gone.
+
+## 10. Re-indexing a source
+
+`POST /api/sources/:id/reindex` → same ownership check, then the row flips to `processing` and a
+fresh ingestion job is enqueued. It exists to recover a `failed` source (a transient OpenAI or
+Qdrant outage, or a website that was down when it was added) and to re-embed everything after a
+chunking or embedding-model change.
+
+Two guards: a source already `processing` is rejected with a **409** rather than queued twice —
+two runs would race, one clearing the vectors the other is still writing — and the request is a
+**400** when RAG is disabled, since there is no pipeline to run. Deduplication beyond that is
+unnecessary: `prepareSource` deletes the source's existing points before any batch is queued, so a
+re-index replaces its vectors instead of accumulating duplicates.
 
 ---
 
@@ -364,18 +488,19 @@ server/src/
   db/               Connection, pragmas, and ordered append-only migrations
   middleware/       validate, requireAuth, upload (multer), errorHandler
   queue/            BullMQ: ingestion.ts (per source) + embedding.ts (per batch)
-  modules/rag/      models, extract, parsers/, chunk, vectorStore, query, chat
+  modules/rag/      models, extract, parsers/, document, chunk, vectorStore, query, chat
   modules/<name>/   routes → controller → service, one folder per domain
   app.ts            Middleware pipeline; routes.ts mounts the modules
   index.ts          API entrypoint; worker.ts is the standalone worker process
 client/src/
   lib/              Typed fetch wrapper, SSE reader, query client, form-error helpers
   features/auth/    Google Identity loader, sign-in button, sign-in gate
-  features/chat/    useChat stream loop, message list, citations, composer
-  features/sources/ Source panel, per-type modals, cards, query hooks
+  features/chat/    useChat stream loop, message list, streaming Markdown, citations, composer
+  features/notebooks/ Notebook route guard + context, shelf hooks, create/rename dialog
+  features/sources/ Source panel, per-type modals, cards, query hooks, viewer/
   features/theme/   Theme provider + context (light / dark / system)
   components/       Layout, sidebar, profile menu, modal, dropzone, editor
-  pages/            ChatPage (landing), SourcesPage, NotFoundPage
+  pages/            NotebooksPage (landing), ChatPage, SourcesPage, NotFoundPage
 ```
 
 ## API
@@ -390,16 +515,29 @@ failure. `code` is a stable machine-readable string; `fields` appears on validat
 | `POST` | `/api/auth/logout` | –    | Clear the session cookie                        |
 | `GET`  | `/api/auth/me`     | ✓    | Current user                                    |
 
-Sources (all require a session):
+Notebooks (all require a session; each is an isolated knowledge base):
 
-| Method   | Path                       | Purpose                                           |
-| -------- | -------------------------- | ------------------------------------------------- |
-| `GET`    | `/api/sources`             | List — `?kind=&q=`                                |
-| `POST`   | `/api/sources/text`        | Create from rich text                             |
-| `POST`   | `/api/sources/website`     | Create from a page URL                            |
-| `POST`   | `/api/sources/youtube`     | Create from a video URL                           |
-| `POST`   | `/api/sources/files/:kind` | Multipart upload, `kind` is `pdf` or `transcript` |
-| `DELETE` | `/api/sources/:id`         | Delete, removing the file and its vectors         |
+| Method   | Path                 | Purpose                                               |
+| -------- | -------------------- | ----------------------------------------------------- |
+| `GET`    | `/api/notebooks`     | List, with per-status source counts                   |
+| `POST`   | `/api/notebooks`     | Create                                                |
+| `GET`    | `/api/notebooks/:id` | One notebook                                          |
+| `PATCH`  | `/api/notebooks/:id` | Rename / re-describe / change icon                    |
+| `DELETE` | `/api/notebooks/:id` | Delete it, its sources, their files and their vectors |
+
+Sources (all require a session, and all are scoped to a notebook):
+
+| Method   | Path                       | Purpose                                            |
+| -------- | -------------------------- | -------------------------------------------------- |
+| `GET`    | `/api/sources`             | List — `?notebookId=` required, `&kind=&q=`        |
+| `GET`    | `/api/sources/:id`         | One source with its extracted text, for the viewer |
+| `GET`    | `/api/sources/:id/file`    | Stream the original upload (`inline`, owner only)  |
+| `POST`   | `/api/sources/text`        | Create from rich text                              |
+| `POST`   | `/api/sources/website`     | Create from a page URL                             |
+| `POST`   | `/api/sources/youtube`     | Create from a video URL                            |
+| `POST`   | `/api/sources/files/:kind` | Multipart upload, `kind` is `pdf` or `transcript`  |
+| `POST`   | `/api/sources/:id/reindex` | Re-run extraction and embedding for one source     |
+| `DELETE` | `/api/sources/:id`         | Delete, removing the file and its vectors          |
 
 Chat (session required, rate-limited to 20/min per IP in production because every call hits the
 embedding _and_ chat APIs several times over):
@@ -409,7 +547,8 @@ embedding _and_ chat APIs several times over):
 | `POST` | `/api/chat`        | Answer in one shot → `{ answer, citations[] }`          |
 | `POST` | `/api/chat/stream` | The same answer as SSE → `citations`, `token`×n, `done` |
 
-Both take `{ question, sourceIds? }`. The client uses the streaming route; the non-streaming one
+Both take `{ notebookId, question, sourceIds? }`. `notebookId` is required — there is no
+notebook-wide or account-wide question. The client uses the streaming route; the non-streaming one
 is the same pipeline without the incremental delivery.
 
 ## Security notes

@@ -1,9 +1,7 @@
 import { Queue, WaitingChildrenError, Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
-import type { SourceStatus } from '@personallm/shared';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
-import { db } from '../db/index.js';
 import { completeIngestion, failIngestion, prepareSource } from '../modules/rag/ingest.js';
 import { enqueueEmbeddingBatches } from './embedding.js';
 import { createRedisConnection } from './connection.js';
@@ -41,8 +39,6 @@ const JOB_OPTIONS = {
   removeOnFail: 5_000,
 };
 
-const markFailed = db.prepare<[SourceStatus, string]>('UPDATE sources SET status = ? WHERE id = ?');
-
 let queue: Queue<IngestionJobData> | null = null;
 let queueConnection: Redis | null = null;
 let worker: Worker<IngestionJobData> | null = null;
@@ -70,7 +66,7 @@ export function scheduleIngestion(sourceId: string): void {
         sourceId,
         error: (error as Error).message,
       });
-      markFailed.run('failed', sourceId);
+      failIngestion(sourceId, `Could not queue indexing: ${(error as Error).message}`);
     });
 }
 
@@ -144,7 +140,7 @@ export function startIngestionWorker(): Worker<IngestionJobData> | null {
     // source itself (see `queue/embedding.ts`), since it fails this job from
     // the embedding worker without the processor running again.
     if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
-      failIngestion(job.data.sourceId);
+      failIngestion(job.data.sourceId, error.message);
     }
   });
   worker.on('error', (error) => logger.error('Ingestion worker error', { error: error.message }));

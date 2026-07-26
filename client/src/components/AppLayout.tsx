@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { useAuth } from '@/features/auth/auth-context';
 import { SignInGate } from '@/features/auth/SignInGate';
+import { useCurrentNotebookId } from '@/features/notebooks/useCurrentNotebookId';
 import { AddSourcePanel } from '@/features/sources/AddSourcePanel';
 import { AddSourceContext } from '@/features/sources/add-source-context';
 import { ProfileMenu } from './ProfileMenu';
@@ -15,6 +16,7 @@ import { Spinner } from './ui';
  */
 export function AppLayout() {
   const { user, isLoading } = useAuth();
+  const notebookId = useCurrentNotebookId();
   const [panelOpen, setPanelOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -87,7 +89,15 @@ export function AppLayout() {
           </main>
         </div>
 
-        <AddSourcePanel open={panelOpen} onClose={() => setPanelOpen(false)} />
+        {/* Only mountable with a notebook to file into — the sidebar's button is
+            disabled without one, so this never silently swallows a click. */}
+        {notebookId && (
+          <AddSourcePanel
+            open={panelOpen}
+            onClose={() => setPanelOpen(false)}
+            notebookId={notebookId}
+          />
+        )}
       </div>
     </AddSourceContext.Provider>
   );

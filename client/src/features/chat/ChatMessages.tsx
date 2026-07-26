@@ -1,24 +1,34 @@
-import { useState, type ReactNode } from 'react';
-import { SOURCE_KIND_LABELS, type ChatCitation, type PublicUser } from '@personallm/shared';
+import { useState } from 'react';
+import {
+  formatTimestamp,
+  SOURCE_KIND_LABELS,
+  type ChatCitation,
+  type ChatPassage,
+  type PublicUser,
+} from '@personallm/shared';
 import { Avatar } from '@/components/Avatar';
 import { LinkIcon, SparkIcon } from '@/components/icons';
 import { cx } from '@/components/ui';
 import { SOURCE_TYPES } from '@/features/sources/sourceTypes';
+import type { ViewerTarget } from '@/features/sources/viewer/SourceViewer';
+import { Markdown, referenceId } from './Markdown';
 import type { ChatMessage } from './useChat';
 
 interface ChatMessagesProps {
   messages: ChatMessage[];
   user: PublicUser | null;
+  /** Opens the source viewer at a cited passage. */
+  onOpenSource: (target: ViewerTarget) => void;
 }
 
-export function ChatMessages({ messages, user }: ChatMessagesProps) {
+export function ChatMessages({ messages, user, onOpenSource }: ChatMessagesProps) {
   return (
     <div className="space-y-6">
       {messages.map((message) =>
         message.role === 'user' ? (
           <UserTurn key={message.id} message={message} user={user} />
         ) : (
-          <AssistantTurn key={message.id} message={message} />
+          <AssistantTurn key={message.id} message={message} onOpenSource={onOpenSource} />
         ),
       )}
     </div>
@@ -36,7 +46,13 @@ function UserTurn({ message, user }: { message: ChatMessage; user: PublicUser | 
   );
 }
 
-function AssistantTurn({ message }: { message: ChatMessage }) {
+function AssistantTurn({
+  message,
+  onOpenSource,
+}: {
+  message: ChatMessage;
+  onOpenSource: (target: ViewerTarget) => void;
+}) {
   const citations = message.citations ?? [];
   // Retrieval runs before the first token, so an empty streaming turn is the
   // wait — show the dots in place of the answer rather than below it.
@@ -54,82 +70,26 @@ function AssistantTurn({ message }: { message: ChatMessage }) {
       <AssistantAvatar />
       <div className="min-w-0 flex-1 pt-1">
         <div
-          className={cx(
-            'text-sm leading-relaxed whitespace-pre-wrap',
-            message.error ? 'text-danger' : 'text-text',
-          )}
+          className={cx('text-sm leading-relaxed', message.error ? 'text-danger' : 'text-text')}
           aria-busy={message.streaming}
         >
-          <AnswerText text={message.content} citations={citations} messageId={message.id} />
-          {message.streaming && <Caret />}
+          <Markdown
+            text={message.content}
+            citations={citations}
+            messageId={message.id}
+            trailing={message.streaming ? <Caret /> : null}
+          />
         </div>
         {/* Citations arrive before the answer; hold them back until it lands. */}
         {citations.length > 0 && !message.streaming && (
-          <References citations={citations} messageId={message.id} />
+          <References
+            citations={citations}
+            messageId={message.id}
+            onOpenSource={onOpenSource}
+          />
         )}
       </div>
     </div>
-  );
-}
-
-/** DOM id tying an inline marker to the reference it points at. */
-const referenceId = (messageId: string, index: number) => `ref-${messageId}-${index}`;
-
-const MARKER = /\[(\d+)\]/g;
-
-/**
- * The answer with its inline `[n]` markers turned into chips that jump to the
- * matching reference. Markers the citation list doesn't cover — a model that
- * numbered past the sources it was given — are left as plain text rather than
- * rendered as a link to nothing.
- *
- * Splitting on complete `[n]` only means a half-streamed `[1` stays literal
- * until its closing bracket arrives.
- */
-function AnswerText({
-  text,
-  citations,
-  messageId,
-}: {
-  text: string;
-  citations: ChatCitation[];
-  messageId: string;
-}) {
-  const cited = new Set(citations.map((citation) => citation.index));
-  const parts: ReactNode[] = [];
-  let cursor = 0;
-
-  for (const match of text.matchAll(MARKER)) {
-    const index = Number(match[1]);
-    if (!cited.has(index)) continue;
-
-    if (match.index > cursor) parts.push(text.slice(cursor, match.index));
-    parts.push(<Marker key={`${match.index}`} index={index} messageId={messageId} />);
-    cursor = match.index + match[0].length;
-  }
-
-  if (cursor === 0) return <>{text}</>;
-  if (cursor < text.length) parts.push(text.slice(cursor));
-  return <>{parts}</>;
-}
-
-function Marker({ index, messageId }: { index: number; messageId: string }) {
-  return (
-    <a
-      href={`#${referenceId(messageId, index)}`}
-      // The list is a couple of lines below the marker, so scrolling is only
-      // for long answers; the focus ring is what actually points it out.
-      onClick={(event) => {
-        event.preventDefault();
-        const target = document.getElementById(referenceId(messageId, index));
-        target?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        target?.focus({ preventScroll: true });
-      }}
-      aria-label={`Reference ${index}`}
-      className="mx-0.5 inline-flex min-w-4 justify-center rounded bg-neon-soft px-1 align-baseline text-[0.7rem] font-medium text-neon no-underline transition hover:bg-neon hover:text-bg"
-    >
-      {index}
-    </a>
   );
 }
 
@@ -144,7 +104,15 @@ function Caret() {
 }
 
 /** The documents behind an answer, numbered to match its inline [n] markers. */
-function References({ citations, messageId }: { citations: ChatCitation[]; messageId: string }) {
+function References({
+  citations,
+  messageId,
+  onOpenSource,
+}: {
+  citations: ChatCitation[];
+  messageId: string;
+  onOpenSource: (target: ViewerTarget) => void;
+}) {
   return (
     <section className="mt-4 border-t border-border pt-3">
       <h4 className="text-xs font-medium text-faint">
@@ -152,7 +120,12 @@ function References({ citations, messageId }: { citations: ChatCitation[]; messa
       </h4>
       <ol className="mt-2 space-y-1">
         {citations.map((citation) => (
-          <Reference key={citation.sourceId} citation={citation} messageId={messageId} />
+          <Reference
+            key={citation.sourceId}
+            citation={citation}
+            messageId={messageId}
+            onOpenSource={onOpenSource}
+          />
         ))}
       </ol>
     </section>
@@ -160,10 +133,19 @@ function References({ citations, messageId }: { citations: ChatCitation[]; messa
 }
 
 /**
- * One source. Collapsed it is a single line; expanding reveals the passages the
- * answer was actually grounded in, which is what makes a reference checkable.
+ * One source behind an answer. Collapsed it is a single line; expanding reveals
+ * the individual passages, each of which opens the source viewer at exactly
+ * where it came from — the page, the timestamp, or the highlighted characters.
  */
-function Reference({ citation, messageId }: { citation: ChatCitation; messageId: string }) {
+function Reference({
+  citation,
+  messageId,
+  onOpenSource,
+}: {
+  citation: ChatCitation;
+  messageId: string;
+  onOpenSource: (target: ViewerTarget) => void;
+}) {
   const [open, setOpen] = useState(false);
   const meta = SOURCE_TYPES[citation.kind];
 
@@ -197,12 +179,21 @@ function Reference({ citation, messageId }: { citation: ChatCitation; messageId:
       </button>
 
       {open && (
-        <div className="mt-1 mb-2 ml-8 space-y-1.5 border-l border-border pl-3">
-          {citation.snippets.map((snippet, index) => (
-            <p key={index} className="text-xs leading-relaxed text-muted">
-              {snippet}
-            </p>
+        <div className="mt-1 mb-2 ml-8 space-y-2 border-l border-border pl-3">
+          {citation.passages.map((passage) => (
+            <PassageRow
+              key={passage.chunkIndex}
+              passage={passage}
+              onOpen={() =>
+                onOpenSource({
+                  sourceId: citation.sourceId,
+                  passage,
+                  quote: passage.text,
+                })
+              }
+            />
           ))}
+
           {citation.url && (
             <a
               href={citation.url}
@@ -211,13 +202,50 @@ function Reference({ citation, messageId }: { citation: ChatCitation; messageId:
               className="inline-flex items-center gap-1 text-xs font-medium text-neon hover:underline"
             >
               <LinkIcon className="size-3.5" />
-              Open source
+              Open the original
             </a>
           )}
         </div>
       )}
     </li>
   );
+}
+
+/**
+ * One quoted passage, as a button that opens it in place.
+ *
+ * The location label is what tells the reader the citation is real before they
+ * even click — "p. 12" is a claim the viewer can then be held to.
+ */
+function PassageRow({ passage, onOpen }: { passage: ChatPassage; onOpen: () => void }) {
+  const location = passageLocation(passage);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group/passage block w-full rounded-lg px-2 py-1.5 text-left transition hover:bg-surface-2"
+    >
+      <span className="flex items-center gap-1.5">
+        {location && (
+          <span className="rounded bg-neon-soft px-1.5 py-0.5 text-[0.65rem] font-medium text-neon">
+            {location}
+          </span>
+        )}
+        <span className="text-[0.65rem] text-faint opacity-0 transition group-hover/passage:opacity-100">
+          Open in source →
+        </span>
+      </span>
+      <span className="mt-1 block text-xs leading-relaxed text-muted">{passage.text}</span>
+    </button>
+  );
+}
+
+/** "p. 12" / "4:05" / null when the format carries no position. */
+function passageLocation(passage: ChatPassage): string | null {
+  if (passage.page !== null) return `p. ${passage.page}`;
+  if (passage.startSec !== null) return formatTimestamp(passage.startSec);
+  return null;
 }
 
 function Thinking() {

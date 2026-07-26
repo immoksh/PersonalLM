@@ -11,13 +11,15 @@ import { UrlModal } from './modals/UrlModal';
 interface AddSourcePanelProps {
   open: boolean;
   onClose: () => void;
+  /** Notebook every source added here is filed under. */
+  notebookId: string;
 }
 
 /**
  * Right-hand slide-over launched by "Add Source". It presents the five source
  * types as tiles; picking one opens the matching collection dialog.
  */
-export function AddSourcePanel({ open, onClose }: AddSourcePanelProps) {
+export function AddSourcePanel({ open, onClose, notebookId }: AddSourcePanelProps) {
   const [activeKind, setActiveKind] = useState<SourceKind | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -165,6 +167,7 @@ export function AddSourcePanel({ open, onClose }: AddSourcePanelProps) {
 
       {fileKind && (
         <FileUploadModal
+          notebookId={notebookId}
           kind={fileKind}
           open
           onClose={() => setActiveKind(null)}
@@ -173,6 +176,7 @@ export function AddSourcePanel({ open, onClose }: AddSourcePanelProps) {
       )}
 
       <PlainTextModal
+        notebookId={notebookId}
         open={activeKind === 'text'}
         onClose={() => setActiveKind(null)}
         onDone={handleDone}
@@ -180,6 +184,7 @@ export function AddSourcePanel({ open, onClose }: AddSourcePanelProps) {
 
       {(activeKind === 'website' || activeKind === 'youtube') && (
         <UrlModal
+          notebookId={notebookId}
           kind={activeKind}
           open
           onClose={() => setActiveKind(null)}

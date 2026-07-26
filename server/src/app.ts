@@ -18,7 +18,26 @@ export function createApp(): Express {
   if (env.isProduction) app.set('trust proxy', 1);
 
   app.disable('x-powered-by');
-  app.use(helmet());
+  app.use(
+    helmet({
+      // Helmet's default policy is `default-src 'self'`, which would block the
+      // two third-party embeds the source viewer depends on: the YouTube player
+      // a video citation seeks to, and the thumbnails on video source cards.
+      // Everything else stays locked to this origin — including `object-src`,
+      // so a PDF is only ever rendered through the same-origin frame that
+      // `/api/sources/:id/file` serves.
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          'frame-src': ["'self'", 'https://www.youtube.com', 'https://www.youtube-nocookie.com'],
+          'img-src': ["'self'", 'data:', 'blob:', 'https://i.ytimg.com', 'https://lh3.googleusercontent.com'],
+          // The Google Identity script that renders the sign-in button.
+          'script-src': ["'self'", 'https://accounts.google.com/gsi/client'],
+          'connect-src': ["'self'", 'https://accounts.google.com'],
+        },
+      },
+    }),
+  );
   app.use(
     cors({
       origin: env.CLIENT_ORIGIN,

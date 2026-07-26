@@ -97,11 +97,23 @@ export async function hydeDocument(question: string): Promise<string> {
   }
 }
 
+/**
+ * Retrieves the passages most relevant to `question` from `sourceIds`.
+ *
+ * The caller resolves that list from the notebook being asked about (see
+ * `retrievableSourceIds`), which is what keeps notebooks isolated: a search
+ * cannot reach a source that is not on it. An empty list is a caller bug — it
+ * means "search nothing" — so it is refused rather than quietly widened.
+ */
 export async function retrieveChunks(
   userId: string,
   question: string,
-  sourceIds?: string[],
+  sourceIds: string[],
 ): Promise<{ queries: QueryVariants; chunks: RetrievedChunk[] }> {
+  if (sourceIds.length === 0) {
+    throw new Error('retrieveChunks called with no sources in scope');
+  }
+
   const [{ stepBack, rewritten, subQueries }, hyde] = await Promise.all([
     rewriteQuery(question),
     hydeDocument(question),
@@ -192,12 +204,19 @@ function dedupe(variants: Array<{ label: string; text: string }>): Array<{
   return kept;
 }
 
-function buildConditions(userId: string, sourceIds?: string[]): Array<Record<string, unknown>> {
-  const must: Array<Record<string, unknown>> = [
+/**
+ * The Qdrant filter every search runs under.
+ *
+ * Scoping is by explicit source id rather than by a `notebookId` on the payload
+ * for two reasons: it is exact — the ids come from a fresh SQLite read of the
+ * notebook, so a source moved or deleted a moment ago cannot answer — and it
+ * keeps working for points indexed before notebooks existed, whose payloads
+ * carry no notebook at all. `userId` stays as a second condition so a bug in
+ * the id resolution can still never cross accounts.
+ */
+function buildConditions(userId: string, sourceIds: string[]): Array<Record<string, unknown>> {
+  return [
     { key: 'metadata.userId', match: { value: userId } },
+    { key: 'metadata.sourceId', match: { any: sourceIds } },
   ];
-  if (sourceIds && sourceIds.length > 0) {
-    must.push({ key: 'metadata.sourceId', match: { any: sourceIds } });
-  }
-  return must;
 }

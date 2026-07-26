@@ -13,7 +13,7 @@
     "start:worker": "node --env-file-if-exists=../.env dist/worker.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:migrate": "tsx --env-file-if-exists=../.env src/db/migrate.ts",
-    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\""
+    "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@langchain/core": "^1.2.3",

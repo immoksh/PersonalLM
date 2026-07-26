@@ -22,6 +22,10 @@ export const queryClient = new QueryClient({
 
 export const queryKeys = {
   me: ['auth', 'me'] as const,
-  sources: (kind: string, search: string) => ['sources', { kind, search }] as const,
+  notebooks: ['notebooks'] as const,
+  /** Source lists are per notebook, so the key carries it and nothing leaks across. */
+  sources: (notebookId: string, kind: string, search: string) =>
+    ['sources', { notebookId, kind, search }] as const,
   allSources: ['sources'] as const,
+  source: (id: string) => ['source', id] as const,
 };
