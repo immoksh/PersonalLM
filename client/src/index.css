@@ -1,0 +1,268 @@
+@import 'tailwindcss';
+
+/*
+ * Two-layer theming. Raw values live on :root / [data-theme], and `@theme inline`
+ * maps them into Tailwind utilities by reference — so flipping the attribute on
+ * <html> re-themes the app instantly, with no rebuild and no duplicated classes.
+ */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-deep: var(--bg-deep);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-neon: var(--neon);
+  --color-neon-soft: var(--neon-soft);
+  --color-neon-ink: var(--neon-ink);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --color-danger: var(--danger);
+  /* Ingestion status: ready (green) / processing (amber) / failed (red). */
+  --color-status-ready: var(--status-ready);
+  --color-status-processing: var(--status-processing);
+  --color-status-failed: var(--status-failed);
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+  --radius-xl2: 1.125rem;
+}
+
+/* Dark is the signature look: true black with neon green + violet accents. */
+:root,
+[data-theme='dark'] {
+  --bg: oklch(13% 0.012 275);
+  --bg-deep: oklch(9% 0.01 275);
+  --surface: oklch(17.5% 0.014 275);
+  --surface-2: oklch(22% 0.017 275);
+  --border: oklch(28% 0.02 275);
+  --border-strong: oklch(38% 0.028 275);
+  --text: oklch(97% 0.004 275);
+  --muted: oklch(74% 0.014 275);
+  --faint: oklch(56% 0.016 275);
+
+  --neon: oklch(87% 0.235 145);
+  --neon-soft: oklch(87% 0.235 145 / 0.14);
+  --neon-ink: oklch(17% 0.06 145);
+  --violet: oklch(70% 0.2 300);
+  --violet-soft: oklch(70% 0.2 300 / 0.16);
+  --danger: oklch(70% 0.19 22);
+
+  --status-ready: oklch(80% 0.18 150);
+  --status-processing: oklch(84% 0.15 85);
+  --status-failed: var(--danger);
+
+  --glow: 0 0 24px -4px oklch(87% 0.235 145 / 0.45);
+  --glow-violet: 0 0 24px -4px oklch(70% 0.2 300 / 0.45);
+  --ring-shadow: 0 1px 2px oklch(0% 0 0 / 0.4);
+  color-scheme: dark;
+}
+
+/*
+ * Light mode keeps the same hues but drops luminance hard — neon green at its
+ * dark-mode lightness is unreadable on white, so the accent darkens instead of
+ * the theme simply inverting.
+ */
+[data-theme='light'] {
+  --bg: oklch(98% 0.004 275);
+  --bg-deep: oklch(95% 0.006 275);
+  --surface: oklch(100% 0 0);
+  --surface-2: oklch(96.5% 0.006 275);
+  --border: oklch(90% 0.008 275);
+  --border-strong: oklch(80% 0.014 275);
+  --text: oklch(20% 0.022 275);
+  --muted: oklch(45% 0.02 275);
+  --faint: oklch(58% 0.018 275);
+
+  --neon: oklch(56% 0.16 148);
+  --neon-soft: oklch(56% 0.16 148 / 0.12);
+  --neon-ink: oklch(99% 0.01 148);
+  --violet: oklch(50% 0.23 300);
+  --violet-soft: oklch(50% 0.23 300 / 0.1);
+  --danger: oklch(52% 0.21 25);
+
+  --status-ready: oklch(56% 0.15 150);
+  --status-processing: oklch(68% 0.13 75);
+  --status-failed: var(--danger);
+
+  --glow: 0 4px 16px -6px oklch(56% 0.16 148 / 0.35);
+  --glow-violet: 0 4px 16px -6px oklch(50% 0.23 300 / 0.3);
+  --ring-shadow: 0 1px 2px oklch(0% 0 0 / 0.06);
+  color-scheme: light;
+}
+
+@layer base {
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+  }
+
+  /* Keyboard focus is always visible; pointer interaction stays clean. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-neon;
+  }
+
+  ::selection {
+    background: var(--neon-soft);
+    color: var(--text);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--faint);
+    background-clip: content-box;
+  }
+}
+
+/* Neon rim + bloom, the accent treatment for primary actions and active states. */
+@utility glow {
+  box-shadow: var(--glow);
+}
+
+@utility glow-violet {
+  box-shadow: var(--glow-violet);
+}
+
+@utility text-gradient {
+  background-image: linear-gradient(100deg, var(--neon), var(--violet));
+  background-clip: text;
+  color: transparent;
+}
+
+/* Faint blueprint grid, anchoring the dark canvas so it does not read as flat. */
+@utility bg-grid {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 20%, transparent 75%);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--neon-soft);
+  }
+  70% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@utility animate-fade-in {
+  animation: fade-in 0.18s ease-out;
+}
+
+@utility animate-slide-up {
+  animation: slide-up 0.22s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@utility animate-slide-in-right {
+  animation: slide-in-right 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@utility animate-pulse-ring {
+  animation: pulse-ring 2s ease-out infinite;
+}
+
+/* Respect users who have asked the OS to reduce motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --- TipTap editor surface -------------------------------------------- */
+
+.tiptap {
+  @apply min-h-48 px-4 py-3 text-sm leading-relaxed outline-none;
+}
+
+.tiptap p {
+  @apply my-2;
+}
+.tiptap h1 {
+  @apply mt-4 mb-2 text-xl font-semibold;
+}
+.tiptap h2 {
+  @apply mt-4 mb-2 text-lg font-semibold;
+}
+.tiptap h3 {
+  @apply mt-3 mb-1.5 text-base font-semibold;
+}
+.tiptap ul {
+  @apply my-2 list-disc pl-6;
+}
+.tiptap ol {
+  @apply my-2 list-decimal pl-6;
+}
+.tiptap li p {
+  @apply my-0.5;
+}
+.tiptap blockquote {
+  @apply my-3 border-l-2 border-neon pl-4 text-muted italic;
+}
+.tiptap code {
+  @apply rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[0.85em];
+}
+.tiptap pre {
+  @apply my-3 overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-xs;
+}
+.tiptap pre code {
+  @apply bg-transparent p-0;
+}
+.tiptap a {
+  @apply text-neon underline underline-offset-2;
+}
+.tiptap hr {
+  @apply my-4 border-border;
+}
+
+/* Placeholder text for the empty editor, driven by the Placeholder extension. */
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-faint;
+}
