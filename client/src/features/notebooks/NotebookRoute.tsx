@@ -31,7 +31,7 @@ export function NotebookRoute() {
   // A deleted or someone else's notebook 404s; bounce to the shelf rather than
   // leaving a dead URL that looks like an app error.
   if (error instanceof ApiClientError && error.status === 404) {
-    return <Navigate to="/notebooks" replace />;
+    return <Navigate to="/" replace />;
   }
 
   if (isPending) {

@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { ThemeProvider } from '@/features/theme/ThemeProvider';
@@ -27,7 +27,10 @@ export function App() {
                       app-wide library to land on, since every source belongs to
                       exactly one notebook. */}
                   <Route path="/" element={<NotebooksPage />} />
-                  <Route path="/notebooks" element={<NotebooksPage />} />
+                  {/* One canonical URL for the shelf, so the wordmark and the
+                      sidebar's "All" link cannot disagree about where home is.
+                      Kept as a redirect for existing links and bookmarks. */}
+                  <Route path="/notebooks" element={<Navigate to="/" replace />} />
 
                   {/* Everything below is scoped to one notebook, which
                       NotebookRoute resolves before any of it renders. */}

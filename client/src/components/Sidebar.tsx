@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '@/features/auth/auth-context';
 import { useCurrentNotebookId } from '@/features/notebooks/useCurrentNotebookId';
 import { useNotebooks } from '@/features/notebooks/useNotebooks';
@@ -40,12 +40,18 @@ export function Sidebar({ onAddSource, onNavigate }: SidebarProps) {
 
   return (
     <div className="flex h-full flex-col border-r border-border bg-surface">
-      <div className="flex items-center gap-2.5 px-5 py-5">
+      {/* The wordmark is the way home, as everywhere else on the web. */}
+      <Link
+        to="/"
+        onClick={onNavigate}
+        aria-label="PersonalLM home"
+        className="flex items-center gap-2.5 px-5 py-5"
+      >
         <span className="grid size-9 place-items-center rounded-xl bg-neon text-neon-ink glow">
           <LayersIcon className="size-5" />
         </span>
         <span className="text-lg font-semibold tracking-tight text-gradient">PersonalLM</span>
-      </div>
+      </Link>
 
       <div className="px-4 pb-4">
         {/* Disabled rather than hidden when there is nowhere to file a source:
@@ -68,7 +74,7 @@ export function Sidebar({ onAddSource, onNavigate }: SidebarProps) {
         <div className="flex items-center justify-between px-5 pb-2">
           <span className="text-xs font-semibold tracking-wide text-faint uppercase">Notebooks</span>
           <NavLink
-            to="/notebooks"
+            to="/"
             onClick={onNavigate}
             className="text-xs font-medium text-faint transition hover:text-text"
           >

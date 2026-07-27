@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Link, Outlet } from 'react-router-dom';
 import { useAuth } from '@/features/auth/auth-context';
 import { SignInGate } from '@/features/auth/SignInGate';
 import { useCurrentNotebookId } from '@/features/notebooks/useCurrentNotebookId';
@@ -61,7 +61,13 @@ export function AppLayout() {
               <MenuIcon className="size-5" />
             </button>
 
-            <span className="font-semibold tracking-tight text-gradient lg:hidden">PersonalLM</span>
+            <Link
+              to="/"
+              aria-label="PersonalLM home"
+              className="font-semibold tracking-tight text-gradient lg:hidden"
+            >
+              PersonalLM
+            </Link>
 
             <div className="ml-auto flex items-center gap-2">
               {isLoading ? (
